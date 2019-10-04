@@ -385,6 +385,7 @@ void set_default_settings(Settings *settings)
 	settings->setDefault("ignore_world_load_errors", "false");
 	settings->setDefault("remote_media", "");
 	settings->setDefault("debug_log_level", "action");
+	settings->setDefault("debug_log_size_max", "50");
 	settings->setDefault("emergequeue_limit_total", "512");
 	settings->setDefault("emergequeue_limit_diskonly", "64");
 	settings->setDefault("emergequeue_limit_generate", "64");
@@ -417,10 +418,9 @@ void set_default_settings(Settings *settings)
 	settings->setDefault("water_level", "1");
 	settings->setDefault("mapgen_limit", "31000");
 	settings->setDefault("chunksize", "5");
-	settings->setDefault("mg_flags", "dungeons");
+	settings->setDefault("mg_flags", "caves,dungeons,light,decorations,biomes");
 	settings->setDefault("fixed_map_seed", "");
 	settings->setDefault("max_block_generate_distance", "8");
-	settings->setDefault("projecting_dungeons", "true");
 	settings->setDefault("enable_mapgen_debug_info", "false");
 
 	// Server list announcing

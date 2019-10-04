@@ -298,9 +298,6 @@ void Server::handleCommand_Init2(NetworkPacket* pkt)
 	infostream << "Server: Sending content to "
 			<< getPlayerName(pkt->getPeerId()) << std::endl;
 
-	// Send player movement settings
-	SendMovement(pkt->getPeerId());
-
 	// Send item definitions
 	SendItemDef(pkt->getPeerId(), m_itemdef, protocol_version);
 
@@ -312,8 +309,20 @@ void Server::handleCommand_Init2(NetworkPacket* pkt)
 	// Send media announcement
 	sendMediaAnnouncement(pkt->getPeerId(), lang);
 
+	RemoteClient *client = getClient(pkt->getPeerId(), CS_InitDone);
+
+	// Send active objects
+	{
+		PlayerSAO *sao = getPlayerSAO(pkt->getPeerId());
+		if (client && sao)
+			SendActiveObjectRemoveAdd(client, sao);
+	}
+
 	// Send detached inventories
-	sendDetachedInventories(pkt->getPeerId());
+	sendDetachedInventories(pkt->getPeerId(), false);
+
+	// Send player movement settings
+	SendMovement(pkt->getPeerId());
 
 	// Send time of day
 	u16 time = m_env->getTimeOfDay();
@@ -323,11 +332,10 @@ void Server::handleCommand_Init2(NetworkPacket* pkt)
 	SendCSMRestrictionFlags(pkt->getPeerId());
 
 	// Warnings about protocol version can be issued here
-	if (getClient(pkt->getPeerId())->net_proto_version < LATEST_PROTOCOL_VERSION) {
+	if (client->net_proto_version < LATEST_PROTOCOL_VERSION) {
 		SendChatMessage(pkt->getPeerId(), ChatMessage(CHATMESSAGE_TYPE_SYSTEM,
-				L"# Server: WARNING: YOUR CLIENT'S VERSION MAY NOT BE FULLY COMPATIBLE "
-				L"WITH THIS SERVER!"));
-
+			L"# Server: WARNING: YOUR CLIENT'S VERSION MAY NOT BE FULLY COMPATIBLE "
+			L"WITH THIS SERVER!"));
 	}
 }
 
@@ -385,6 +393,9 @@ void Server::handleCommand_ClientReady(NetworkPacket* pkt)
 	m_clients.setClientVersion(
 			peer_id, major_ver, minor_ver, patch_ver,
 			full_ver);
+
+	if (pkt->getRemainingBytes() >= 2)
+		*pkt >> playersao->getPlayer()->formspec_version;
 
 	const std::vector<std::string> &players = m_clients.getPlayerNames();
 	NetworkPacket list_pkt(TOCLIENT_UPDATE_PLAYER_LIST, 0, peer_id);
@@ -608,10 +619,9 @@ void Server::handleCommand_InventoryAction(NetworkPacket* pkt)
 		ma->from_inv.applyCurrentPlayer(player->getName());
 		ma->to_inv.applyCurrentPlayer(player->getName());
 
-		setInventoryModified(ma->from_inv, false);
-		if (ma->from_inv != ma->to_inv) {
-			setInventoryModified(ma->to_inv, false);
-		}
+		setInventoryModified(ma->from_inv);
+		if (ma->from_inv != ma->to_inv)
+			setInventoryModified(ma->to_inv);
 
 		bool from_inv_is_current_player =
 			(ma->from_inv.type == InventoryLocation::PLAYER) &&
@@ -676,7 +686,7 @@ void Server::handleCommand_InventoryAction(NetworkPacket* pkt)
 
 		da->from_inv.applyCurrentPlayer(player->getName());
 
-		setInventoryModified(da->from_inv, false);
+		setInventoryModified(da->from_inv);
 
 		/*
 			Disable dropping items out of craftpreview
@@ -712,7 +722,7 @@ void Server::handleCommand_InventoryAction(NetworkPacket* pkt)
 
 		ca->craft_inv.applyCurrentPlayer(player->getName());
 
-		setInventoryModified(ca->craft_inv, false);
+		setInventoryModified(ca->craft_inv);
 
 		//bool craft_inv_is_current_player =
 		//	(ca->craft_inv.type == InventoryLocation::PLAYER) &&
@@ -731,8 +741,6 @@ void Server::handleCommand_InventoryAction(NetworkPacket* pkt)
 	a->apply(this, playersao, this);
 	// Eat the action
 	delete a;
-
-	SendInventory(playersao);
 }
 
 void Server::handleCommand_ChatMessage(NetworkPacket* pkt)
@@ -1142,9 +1150,10 @@ void Server::handleCommand_Interact(NetworkPacket *pkt)
 			if (pointed_object->isGone())
 				return;
 
-			ItemStack punchitem = playersao->getWieldedItem();
+			ItemStack selected_item, hand_item;
+			ItemStack tool_item = playersao->getWieldedItem(&selected_item, &hand_item);
 			ToolCapabilities toolcap =
-					punchitem.getToolCapabilities(m_itemdef);
+					tool_item.getToolCapabilities(m_itemdef);
 			v3f dir = (pointed_object->getBasePosition() -
 					(playersao->getBasePosition() + playersao->getEyeOffset())
 						).normalize();
@@ -1154,8 +1163,12 @@ void Server::handleCommand_Interact(NetworkPacket *pkt)
 			u16 src_original_hp = pointed_object->getHP();
 			u16 dst_origin_hp = playersao->getHP();
 
-			pointed_object->punch(dir, &toolcap, playersao,
+			u16 wear = pointed_object->punch(dir, &toolcap, playersao,
 					time_from_last_punch);
+
+			bool changed = selected_item.addWear(wear, m_itemdef);
+			if (changed)
+				playersao->setWieldedItem(selected_item);
 
 			// If the object is a player and its HP changed
 			if (src_original_hp != pointed_object->getHP() &&
@@ -1283,11 +1296,12 @@ void Server::handleCommand_Interact(NetworkPacket *pkt)
 		3: place block or right-click object
 	*/
 	else if (action == INTERACT_PLACE) {
-		ItemStack item = playersao->getWieldedItem();
+		ItemStack selected_item;
+		playersao->getWieldedItem(&selected_item, nullptr);
 
 		// Reset build time counter
 		if (pointed.type == POINTEDTHING_NODE &&
-				item.getDefinition(m_itemdef).type == ITEM_NODE)
+				selected_item.getDefinition(m_itemdef).type == ITEM_NODE)
 			getClient(pkt->getPeerId())->m_time_from_building = 0.0;
 
 		if (pointed.type == POINTEDTHING_OBJECT) {
@@ -1303,14 +1317,13 @@ void Server::handleCommand_Interact(NetworkPacket *pkt)
 
 			// Do stuff
 			pointed_object->rightClick(playersao);
-		}
-		else if (m_script->item_OnPlace(
-				item, playersao, pointed)) {
+		} else if (m_script->item_OnPlace(
+				selected_item, playersao, pointed)) {
 			// Placement was handled in lua
 
 			// Apply returned ItemStack
-			if (playersao->setWieldedItem(item)) {
-				SendInventory(playersao);
+			if (playersao->setWieldedItem(selected_item)) {
+				SendInventory(playersao, true);
 			}
 		}
 
@@ -1319,7 +1332,7 @@ void Server::handleCommand_Interact(NetworkPacket *pkt)
 		RemoteClient *client = getClient(pkt->getPeerId());
 		v3s16 blockpos = getNodeBlockPos(floatToInt(pointed_pos_above, BS));
 		v3s16 blockpos2 = getNodeBlockPos(floatToInt(pointed_pos_under, BS));
-		if (!item.getDefinition(m_itemdef).node_placement_prediction.empty()) {
+		if (!selected_item.getDefinition(m_itemdef).node_placement_prediction.empty()) {
 			client->SetBlockNotSent(blockpos);
 			if (blockpos2 != blockpos) {
 				client->SetBlockNotSent(blockpos2);
@@ -1337,16 +1350,17 @@ void Server::handleCommand_Interact(NetworkPacket *pkt)
 		4: use
 	*/
 	else if (action == INTERACT_USE) {
-		ItemStack item = playersao->getWieldedItem();
+		ItemStack selected_item;
+		playersao->getWieldedItem(&selected_item, nullptr);
 
-		actionstream << player->getName() << " uses " << item.name
+		actionstream << player->getName() << " uses " << selected_item.name
 				<< ", pointing at " << pointed.dump() << std::endl;
 
 		if (m_script->item_OnUse(
-				item, playersao, pointed)) {
+				selected_item, playersao, pointed)) {
 			// Apply returned ItemStack
-			if (playersao->setWieldedItem(item)) {
-				SendInventory(playersao);
+			if (playersao->setWieldedItem(selected_item)) {
+				SendInventory(playersao, true);
 			}
 		}
 
@@ -1356,15 +1370,16 @@ void Server::handleCommand_Interact(NetworkPacket *pkt)
 		5: rightclick air
 	*/
 	else if (action == INTERACT_ACTIVATE) {
-		ItemStack item = playersao->getWieldedItem();
+		ItemStack selected_item;
+		playersao->getWieldedItem(&selected_item, nullptr);
 
 		actionstream << player->getName() << " activates "
-				<< item.name << std::endl;
+				<< selected_item.name << std::endl;
 
 		if (m_script->item_OnSecondaryUse(
-				item, playersao)) {
-			if( playersao->setWieldedItem(item)) {
-				SendInventory(playersao);
+				selected_item, playersao)) {
+			if (playersao->setWieldedItem(selected_item)) {
+				SendInventory(playersao, true);
 			}
 		}
 	} // action == INTERACT_ACTIVATE

@@ -195,9 +195,14 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 		ContentFeatures version 13
 		Add full Euler rotations instead of just yaw
 		Add TOCLIENT_PLAYER_SPEED
+	PROTOCOL VERSION 38:
+		Incremental inventory sending mode
+		Unknown inventory serialization fields no longer throw an error
+		Mod-specific formspec version
+		Player FOV override API
 */
 
-#define LATEST_PROTOCOL_VERSION 37
+#define LATEST_PROTOCOL_VERSION 38
 #define LATEST_PROTOCOL_VERSION_STRING TOSTRING(LATEST_PROTOCOL_VERSION)
 
 // Server's supported network protocol range
@@ -216,8 +221,16 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #define PASSWORD_SIZE 28       // Maximum password length. Allows for
                                // base64-encoded SHA-1 (27+\0).
 
-#define FORMSPEC_API_VERSION 1
-#define FORMSPEC_VERSION_STRING "formspec_version[" TOSTRING(FORMSPEC_API_VERSION) "]"
+/*
+	Changes by FORMSPEC_API_VERSION:
+
+	FORMSPEC VERSION 1:
+		(too much)
+	FORMSPEC VERSION 2:
+		Forced real coordinates
+		background[]: 9-slice scaling parameters
+*/
+#define FORMSPEC_API_VERSION 2
 
 #define TEXTURENAME_ALLOWED_CHARS "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
 
@@ -358,7 +371,13 @@ enum ToClientCommand
 		wstring reason
 	*/
 
-	TOCLIENT_PLAYERITEM = 0x36, // Obsolete
+	TOCLIENT_FOV = 0x36,
+	/*
+		Sends an FOV override/multiplier to client.
+
+		float fov
+		bool is_multiplier
+	*/
 
 	TOCLIENT_DEATHSCREEN = 0x37,
 	/*

@@ -154,12 +154,14 @@ public:
 
 	virtual bool getSelectionBox(aabb3f *toset) const;
 
-	v3f getPosition();
+	const v3f getPosition() const;
 
-	inline const v3f &getRotation()
+	void setPosition(const v3f &pos)
 	{
-		return m_rotation;
+		pos_translator.val_current = pos;
 	}
+
+	inline const v3f &getRotation() const { return m_rotation; }
 
 	const bool isImmortal();
 
@@ -178,6 +180,12 @@ public:
 	{
 		assert(m_matrixnode);
 		return m_matrixnode->getRelativeTransformationMatrix();
+	}
+
+	inline const core::matrix4 &getAbsolutePosRotMatrix() const
+	{
+		assert(m_matrixnode);
+		return m_matrixnode->getAbsoluteTransformation();
 	}
 
 	inline f32 getStepHeight() const

@@ -193,6 +193,7 @@ public:
 	void handleCommand_ActiveObjectRemoveAdd(NetworkPacket* pkt);
 	void handleCommand_ActiveObjectMessages(NetworkPacket* pkt);
 	void handleCommand_Movement(NetworkPacket* pkt);
+	void handleCommand_Fov(NetworkPacket *pkt);
 	void handleCommand_HP(NetworkPacket* pkt);
 	void handleCommand_Breath(NetworkPacket* pkt);
 	void handleCommand_MovePlayer(NetworkPacket* pkt);
@@ -274,9 +275,7 @@ public:
 
 	// Returns true if the inventory of the local player has been
 	// updated from the server. If it is true, it is set to false.
-	bool getLocalInventoryUpdated();
-	// Copies the inventory of the local player to parameter
-	void getLocalInventory(Inventory &dst);
+	bool updateWieldedItem();
 
 	/* InventoryManager interface */
 	Inventory* getInventory(const InventoryLocation &loc) override;
@@ -335,12 +334,14 @@ public:
 	// disconnect client when CSM failed.
 	const std::string &accessDeniedReason() const { return m_access_denied_reason; }
 
-	bool itemdefReceived()
+	const bool itemdefReceived() const
 	{ return m_itemdef_received; }
-	bool nodedefReceived()
+	const bool nodedefReceived() const
 	{ return m_nodedef_received; }
-	bool mediaReceived()
+	const bool mediaReceived() const
 	{ return !m_media_downloader; }
+	const bool activeObjectsReceived() const
+	{ return m_activeobjects_received; }
 
 	u16 getProtoVersion()
 	{ return m_proto_ver; }
@@ -399,7 +400,6 @@ public:
 	}
 
 	ClientScripting *getScript() { return m_script; }
-	const bool moddingEnabled() const { return m_modding_enabled; }
 	const bool modsLoaded() const { return m_mods_loaded; }
 
 	void pushToEventQueue(ClientEvent *event);
@@ -504,7 +504,7 @@ private:
 	// If 0, server init hasn't been received yet.
 	u16 m_proto_ver = 0;
 
-	bool m_inventory_updated = false;
+	bool m_update_wielded_item = false;
 	Inventory *m_inventory_from_server = nullptr;
 	float m_inventory_from_server_age = 0.0f;
 	PacketCounter m_packetcounter;
@@ -542,6 +542,7 @@ private:
 	std::queue<ClientEvent *> m_client_event_queue;
 	bool m_itemdef_received = false;
 	bool m_nodedef_received = false;
+	bool m_activeobjects_received = false;
 	bool m_mods_loaded = false;
 	ClientMediaDownloader *m_media_downloader;
 

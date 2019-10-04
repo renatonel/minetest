@@ -23,9 +23,9 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "config.h"
 #include "porting.h"
 #include "filesys.h"
+#include "gettext.h"
 
 #if USE_FREETYPE
-#include "gettext.h"
 #include "irrlicht_changes/CGUITTFont.h"
 #endif
 
@@ -275,7 +275,6 @@ void FontEngine::initFont(unsigned int basesize, FontMode mode)
 				font_shadow_alpha);
 
 		if (font) {
-			font->grab();
 			m_font_cache[mode][basesize] = font;
 			return;
 		}
@@ -365,8 +364,6 @@ void FontEngine::initSimpleFont(unsigned int basesize, FontMode mode)
 		}
 	}
 
-	if (font) {
-		font->grab();
+	if (font)
 		m_font_cache[mode][basesize] = font;
-	}
 }

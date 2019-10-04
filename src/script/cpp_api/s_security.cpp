@@ -243,6 +243,7 @@ void ScriptApiSecurity::initializeSecurityClient()
 		"rawset",
 		"select",
 		"setfenv",
+		// getmetatable can be used to escape the sandbox
 		"setmetatable",
 		"tonumber",
 		"tostring",
@@ -264,6 +265,7 @@ void ScriptApiSecurity::initializeSecurityClient()
 	};
 	static const char *debug_whitelist[] = {
 		"getinfo",
+		"traceback"
 	};
 
 #if USE_LUAJIT

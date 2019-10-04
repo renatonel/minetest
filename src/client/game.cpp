@@ -55,7 +55,6 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "particles.h"
 #include "porting.h"
 #include "profiler.h"
-#include "quicktune_shortcutter.h"
 #include "raycast.h"
 #include "server.h"
 #include "settings.h"
@@ -65,6 +64,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "util/basic_macros.h"
 #include "util/directiontables.h"
 #include "util/pointedthing.h"
+#include "util/quicktune_shortcutter.h"
 #include "irrlicht_changes/static_text.h"
 #include "version.h"
 #include "script/scripting_client.h"
@@ -184,7 +184,7 @@ struct LocalFormspecHandler : public TextDest
 			return;
 		}
 
-		if (m_client && m_client->moddingEnabled())
+		if (m_client && m_client->modsLoaded())
 			m_client->getScript()->on_formspec_input(m_formname, fields);
 	}
 
@@ -413,6 +413,8 @@ class GameGlobalShaderConstantSetter : public IShaderConstantSetter
 	CachedPixelShaderSetting<float, 3> m_eye_position_pixel;
 	CachedVertexShaderSetting<float, 3> m_eye_position_vertex;
 	CachedPixelShaderSetting<float, 3> m_minimap_yaw;
+	CachedPixelShaderSetting<float, 3> m_camera_offset_pixel;
+	CachedPixelShaderSetting<float, 3> m_camera_offset_vertex;
 	CachedPixelShaderSetting<SamplerLayer_t> m_base_texture;
 	CachedPixelShaderSetting<SamplerLayer_t> m_normal_texture;
 	CachedPixelShaderSetting<SamplerLayer_t> m_texture_flags;
@@ -445,6 +447,8 @@ public:
 		m_eye_position_pixel("eyePosition"),
 		m_eye_position_vertex("eyePosition"),
 		m_minimap_yaw("yawVec"),
+		m_camera_offset_pixel("cameraOffset"),
+		m_camera_offset_vertex("cameraOffset"),
 		m_base_texture("baseTexture"),
 		m_normal_texture("normalTexture"),
 		m_texture_flags("textureFlags"),
@@ -493,7 +497,7 @@ public:
 			sunlight.b };
 		m_day_light.set(dnc, services);
 
-		u32 animation_timer = porting::getTimeMs() % 100000;
+		u32 animation_timer = porting::getTimeMs() % 1000000;
 		float animation_timer_f = (float)animation_timer / 100000.f;
 		m_animation_timer_vertex.set(&animation_timer_f, services);
 		m_animation_timer_pixel.set(&animation_timer_f, services);
@@ -522,6 +526,18 @@ public:
 #endif
 			m_minimap_yaw.set(minimap_yaw_array, services);
 		}
+
+		float camera_offset_array[3];
+		v3f offset = intToFloat(m_client->getCamera()->getOffset(), BS);
+#if (IRRLICHT_VERSION_MAJOR == 1 && IRRLICHT_VERSION_MINOR < 8)
+		camera_offset_array[0] = offset.X;
+		camera_offset_array[1] = offset.Y;
+		camera_offset_array[2] = offset.Z;
+#else
+		offset.getAs3Values(camera_offset_array);
+#endif
+		m_camera_offset_pixel.set(camera_offset_array, services);
+		m_camera_offset_vertex.set(camera_offset_array, services);
 
 		SamplerLayer_t base_tex = 0,
 				normal_tex = 1,
@@ -599,7 +615,6 @@ struct GameRunData {
 	bool dig_instantly;
 	bool digging_blocked;
 	bool left_punch;
-	bool update_wielded_item_trigger;
 	bool reset_jump_timer;
 	float nodig_delay_timer;
 	float dig_time;
@@ -689,8 +704,8 @@ protected:
 	bool handleCallbacks();
 	void processQueues();
 	void updateProfilers(const RunStats &stats, const FpsControl &draw_times, f32 dtime);
-	void addProfilerGraphs(const RunStats &stats, const FpsControl &draw_times, f32 dtime);
 	void updateStats(RunStats *stats, const FpsControl &draw_times, f32 dtime);
+	void updateProfilerGraphs(ProfilerGraph *graph);
 
 	// Input related
 	void processUserInput(f32 dtime);
@@ -751,7 +766,6 @@ protected:
 			const ItemStack &selected_item, const ItemStack &hand_item, f32 dtime);
 	void updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 			const CameraOrientation &cam);
-	void updateProfilerGraphs(ProfilerGraph *graph);
 
 	// Misc
 	void limitFps(FpsControl *fps_timings, f32 *dtime);
@@ -803,8 +817,9 @@ private:
 
 	void updateChat(f32 dtime, const v2u32 &screensize);
 
-	bool nodePlacementPrediction(const ItemDefinition &selected_def,
-		const ItemStack &selected_item, const v3s16 &nodepos, const v3s16 &neighbourpos);
+	bool nodePlacement(const ItemDefinition &selected_def, const ItemStack &selected_item,
+		const v3s16 &nodepos, const v3s16 &neighbourpos, const PointedThing &pointed,
+		const NodeMetadata *meta);
 	static const ClientEventHandler clientEventHandler[CLIENTEVENT_MAX];
 
 	InputHandler *input = nullptr;
@@ -1019,7 +1034,6 @@ bool Game::startup(bool *kill,
 	// Reinit runData
 	runData = GameRunData();
 	runData.time_from_last_punch = 10.0;
-	runData.update_wielded_item_trigger = true;
 
 	m_game_ui->initFlags();
 
@@ -1082,10 +1096,12 @@ void Game::run()
 			previous_screen_size = current_screen_size;
 		}
 
-		/* Must be called immediately after a device->run() call because it
-		 * uses device->getTimer()->getTime()
-		 */
+		// Calculate dtime =
+		//    RenderingEngine::run() from this iteration
+		//  + Sleep time until the wanted FPS are reached
 		limitFps(&draw_times, &dtime);
+
+		// Prepare render data for next iteration
 
 		updateStats(&stats, draw_times, dtime);
 		updateInteractTimers(dtime);
@@ -1722,7 +1738,8 @@ void Game::processQueues()
 }
 
 
-void Game::updateProfilers(const RunStats &stats, const FpsControl &draw_times, f32 dtime)
+void Game::updateProfilers(const RunStats &stats, const FpsControl &draw_times,
+		f32 dtime)
 {
 	float profiler_print_interval =
 			g_settings->getFloat("profiler_print_interval");
@@ -1730,7 +1747,7 @@ void Game::updateProfilers(const RunStats &stats, const FpsControl &draw_times, 
 
 	if (profiler_print_interval == 0) {
 		print_to_log = false;
-		profiler_print_interval = 5;
+		profiler_print_interval = 3;
 	}
 
 	if (profiler_interval.step(dtime, profiler_print_interval)) {
@@ -1743,24 +1760,13 @@ void Game::updateProfilers(const RunStats &stats, const FpsControl &draw_times, 
 		g_profiler->clear();
 	}
 
-	addProfilerGraphs(stats, draw_times, dtime);
+	// Update update graphs
+	g_profiler->graphAdd("Time non-rendering [ms]",
+		draw_times.busy_time - stats.drawtime);
+
+	g_profiler->graphAdd("Sleep [ms]", draw_times.sleep_time);
+	g_profiler->graphAdd("FPS", 1.0f / dtime);
 }
-
-
-void Game::addProfilerGraphs(const RunStats &stats,
-		const FpsControl &draw_times, f32 dtime)
-{
-	g_profiler->graphAdd("mainloop_other",
-			draw_times.busy_time / 1000.0f - stats.drawtime / 1000.0f);
-
-	if (draw_times.sleep_time != 0)
-		g_profiler->graphAdd("mainloop_sleep", draw_times.sleep_time / 1000.0f);
-	g_profiler->graphAdd("mainloop_dtime", dtime);
-
-	g_profiler->add("Elapsed time", dtime);
-	g_profiler->avg("FPS", 1. / dtime);
-}
-
 
 void Game::updateStats(RunStats *stats, const FpsControl &draw_times,
 		f32 dtime)
@@ -1881,7 +1887,7 @@ void Game::processKeyInput()
 	} else if (wasKeyDown(KeyType::CMD)) {
 		openConsole(0.2, L"/");
 	} else if (wasKeyDown(KeyType::CMD_LOCAL)) {
-		if (client->moddingEnabled())
+		if (client->modsLoaded())
 			openConsole(0.2, L".");
 		else
 			m_game_ui->showStatusText(wgettext("Client side scripting is disabled"));
@@ -2037,7 +2043,7 @@ void Game::openInventory()
 	InventoryLocation inventoryloc;
 	inventoryloc.setCurrentPlayer();
 
-	if (!client->moddingEnabled()
+	if (!client->modsLoaded()
 			|| !client->getScript()->on_inventory_open(fs_src->m_client->getInventory(inventoryloc))) {
 		TextDest *txt_dst = new TextDestPlayerInventory(client);
 		auto *&formspec = m_game_ui->updateFormspec("");
@@ -2343,7 +2349,7 @@ void Game::toggleFullViewRange()
 void Game::checkZoomEnabled()
 {
 	LocalPlayer *player = client->getEnv().getLocalPlayer();
-	if (player->getZoomFOV() < 0.001f)
+	if (player->getZoomFOV() < 0.001f || player->getFov().fov > 0.0f)
 		m_game_ui->showTranslatedStatusText("Zoom currently disabled by game or mod");
 }
 
@@ -2475,7 +2481,7 @@ void Game::updatePlayerControl(const CameraOrientation &cam)
 	}
 
 	// autoforward if set: simulate "up" key
-	if (player->getPlayerSettings().continuous_forward) {
+	if (player->getPlayerSettings().continuous_forward && !player->isDead()) {
 		control.up = true;
 		keypress_bits |= 1U << 0;
 	}
@@ -2492,7 +2498,7 @@ inline void Game::step(f32 *dtime)
 	bool can_be_and_is_paused =
 			(simple_singleplayer_mode && g_menumgr.pausesGame());
 
-	if (can_be_and_is_paused) {	// This is for a singleplayer server
+	if (can_be_and_is_paused) { // This is for a singleplayer server
 		*dtime = 0;             // No time passes
 	} else {
 		if (server)
@@ -2527,9 +2533,8 @@ void Game::handleClientEvent_None(ClientEvent *event, CameraOrientation *cam)
 
 void Game::handleClientEvent_PlayerDamage(ClientEvent *event, CameraOrientation *cam)
 {
-	if (client->moddingEnabled()) {
+	if (client->modsLoaded())
 		client->getScript()->on_damage_taken(event->player_damage.amount);
-	}
 
 	// Damage flash and hurt tilt are not used at death
 	if (client->getHP() > 0) {
@@ -2557,7 +2562,7 @@ void Game::handleClientEvent_Deathscreen(ClientEvent *event, CameraOrientation *
 {
 	// If client scripting is enabled, deathscreen is handled by CSM code in
 	// builtin/client/init.lua
-	if (client->moddingEnabled())
+	if (client->modsLoaded())
 		client->getScript()->on_death();
 	else
 		showDeathFormspec();
@@ -3044,9 +3049,8 @@ void Game::processPlayerInteraction(f32 dtime, bool show_hud, bool show_debug)
 	else
 		runData.repeat_rightclick_timer = 0;
 
-
 	if (selected_def.usable && input->getLeftState()) {
-		if (input->getLeftClicked() && (!client->moddingEnabled()
+		if (input->getLeftClicked() && (!client->modsLoaded()
 				|| !client->getScript()->on_item_use(selected_item, pointed)))
 			client->interact(INTERACT_USE, pointed);
 	} else if (pointed.type == POINTEDTHING_NODE) {
@@ -3212,65 +3216,26 @@ void Game::handlePointingAtNode(const PointedThing &pointed,
 		runData.repeat_rightclick_timer = 0;
 		infostream << "Ground right-clicked" << std::endl;
 
-		if (meta && !meta->getString("formspec").empty() && !random_input
-				&& !isKeyDown(KeyType::SNEAK)) {
-			// Report right click to server
-			if (nodedef_manager->get(map.getNode(nodepos)).rightclickable) {
-				client->interact(INTERACT_PLACE, pointed);
-			}
+		camera->setDigging(1);  // right click animation (always shown for feedback)
 
-			infostream << "Launching custom inventory view" << std::endl;
+		soundmaker->m_player_rightpunch_sound = SimpleSoundSpec();
 
-			InventoryLocation inventoryloc;
-			inventoryloc.setNodeMeta(nodepos);
+		// If the wielded item has node placement prediction,
+		// make that happen
+		// And also set the sound and send the interact
+		// But first check for meta formspec and rightclickable
+		auto &def = selected_item.getDefinition(itemdef_manager);
+		bool placed = nodePlacement(def, selected_item, nodepos, neighbourpos,
+			pointed, meta);
 
-			NodeMetadataFormSource *fs_src = new NodeMetadataFormSource(
-				&client->getEnv().getClientMap(), nodepos);
-			TextDest *txt_dst = new TextDestNodeMetadata(nodepos, client);
-
-			auto *&formspec = m_game_ui->updateFormspec("");
-			GUIFormSpecMenu::create(formspec, client, &input->joystick, fs_src,
-				txt_dst, client->getFormspecPrepend());
-
-			formspec->setFormSpec(meta->getString("formspec"), inventoryloc);
-		} else {
-			// Report right click to server
-
-			camera->setDigging(1);  // right click animation (always shown for feedback)
-
-			// If the wielded item has node placement prediction,
-			// make that happen
-			auto &def = selected_item.getDefinition(itemdef_manager);
-			bool placed = nodePlacementPrediction(def, selected_item, nodepos,
-				neighbourpos);
-
-			if (placed) {
-				// Report to server
-				client->interact(INTERACT_PLACE, pointed);
-				// Read the sound
-				soundmaker->m_player_rightpunch_sound =
-						def.sound_place;
-
-				if (client->moddingEnabled())
-					client->getScript()->on_placenode(pointed, def);
-			} else {
-				soundmaker->m_player_rightpunch_sound =
-						SimpleSoundSpec();
-
-				if (def.node_placement_prediction.empty() ||
-						nodedef_manager->get(map.getNode(nodepos)).rightclickable) {
-					client->interact(INTERACT_PLACE, pointed); // Report to server
-				} else {
-					soundmaker->m_player_rightpunch_sound =
-						def.sound_place_failed;
-				}
-			}
-		}
+		if (placed && client->modsLoaded())
+			client->getScript()->on_placenode(pointed, def);
 	}
 }
 
-bool Game::nodePlacementPrediction(const ItemDefinition &selected_def,
-	const ItemStack &selected_item, const v3s16 &nodepos, const v3s16 &neighbourpos)
+bool Game::nodePlacement(const ItemDefinition &selected_def,
+	const ItemStack &selected_item, const v3s16 &nodepos, const v3s16 &neighbourpos,
+	const PointedThing &pointed, const NodeMetadata *meta)
 {
 	std::string prediction = selected_def.node_placement_prediction;
 	const NodeDefManager *nodedef = client->ndef();
@@ -3279,144 +3244,187 @@ bool Game::nodePlacementPrediction(const ItemDefinition &selected_def,
 	bool is_valid_position;
 
 	node = map.getNode(nodepos, &is_valid_position);
-	if (!is_valid_position)
+	if (!is_valid_position) {
+		soundmaker->m_player_rightpunch_sound = selected_def.sound_place_failed;
 		return false;
+	}
 
-	if (!prediction.empty() && !(nodedef->get(node).rightclickable &&
+	// formspec in meta
+	if (meta && !meta->getString("formspec").empty() && !random_input
+			&& !isKeyDown(KeyType::SNEAK)) {
+		// on_rightclick callbacks are called anyway
+		if (nodedef_manager->get(map.getNode(nodepos)).rightclickable)
+			client->interact(INTERACT_PLACE, pointed);
+
+		infostream << "Launching custom inventory view" << std::endl;
+
+		InventoryLocation inventoryloc;
+		inventoryloc.setNodeMeta(nodepos);
+
+		NodeMetadataFormSource *fs_src = new NodeMetadataFormSource(
+			&client->getEnv().getClientMap(), nodepos);
+		TextDest *txt_dst = new TextDestNodeMetadata(nodepos, client);
+
+		auto *&formspec = m_game_ui->updateFormspec("");
+		GUIFormSpecMenu::create(formspec, client, &input->joystick, fs_src,
+			txt_dst, client->getFormspecPrepend());
+
+		formspec->setFormSpec(meta->getString("formspec"), inventoryloc);
+		return false;
+	}
+
+	// on_rightclick callback
+	if (prediction.empty() || (nodedef->get(node).rightclickable &&
 			!isKeyDown(KeyType::SNEAK))) {
-		verbosestream << "Node placement prediction for "
-			<< selected_item.name << " is "
-			<< prediction << std::endl;
-		v3s16 p = neighbourpos;
+		// Report to server
+		client->interact(INTERACT_PLACE, pointed);
+		return false;
+	}
 
-		// Place inside node itself if buildable_to
-		MapNode n_under = map.getNode(nodepos, &is_valid_position);
-		if (is_valid_position)
-		{
-			if (nodedef->get(n_under).buildable_to)
-				p = nodepos;
-			else {
-				node = map.getNode(p, &is_valid_position);
-				if (is_valid_position &&!nodedef->get(node).buildable_to)
-					return false;
+	verbosestream << "Node placement prediction for "
+		<< selected_def.name << " is "
+		<< prediction << std::endl;
+	v3s16 p = neighbourpos;
+
+	// Place inside node itself if buildable_to
+	MapNode n_under = map.getNode(nodepos, &is_valid_position);
+	if (is_valid_position) {
+		if (nodedef->get(n_under).buildable_to) {
+			p = nodepos;
+		} else {
+			node = map.getNode(p, &is_valid_position);
+			if (is_valid_position && !nodedef->get(node).buildable_to) {
+				// Report to server
+				client->interact(INTERACT_PLACE, pointed);
+				return false;
 			}
 		}
+	}
 
-		// Find id of predicted node
-		content_t id;
-		bool found = nodedef->getId(prediction, id);
+	// Find id of predicted node
+	content_t id;
+	bool found = nodedef->getId(prediction, id);
 
-		if (!found) {
-			errorstream << "Node placement prediction failed for "
-				<< selected_item.name << " (places "
-				<< prediction
-				<< ") - Name not known" << std::endl;
-			return false;
+	if (!found) {
+		errorstream << "Node placement prediction failed for "
+			<< selected_def.name << " (places "
+			<< prediction
+			<< ") - Name not known" << std::endl;
+		// Handle this as if prediction was empty
+		// Report to server
+		client->interact(INTERACT_PLACE, pointed);
+		return false;
+	}
+
+	const ContentFeatures &predicted_f = nodedef->get(id);
+
+	// Predict param2 for facedir and wallmounted nodes
+	u8 param2 = 0;
+
+	if (predicted_f.param_type_2 == CPT2_WALLMOUNTED ||
+			predicted_f.param_type_2 == CPT2_COLORED_WALLMOUNTED) {
+		v3s16 dir = nodepos - neighbourpos;
+
+		if (abs(dir.Y) > MYMAX(abs(dir.X), abs(dir.Z))) {
+			param2 = dir.Y < 0 ? 1 : 0;
+		} else if (abs(dir.X) > abs(dir.Z)) {
+			param2 = dir.X < 0 ? 3 : 2;
+		} else {
+			param2 = dir.Z < 0 ? 5 : 4;
 		}
+	}
 
-		const ContentFeatures &predicted_f = nodedef->get(id);
+	if (predicted_f.param_type_2 == CPT2_FACEDIR ||
+			predicted_f.param_type_2 == CPT2_COLORED_FACEDIR) {
+		v3s16 dir = nodepos - floatToInt(client->getEnv().getLocalPlayer()->getPosition(), BS);
 
-		// Predict param2 for facedir and wallmounted nodes
-		u8 param2 = 0;
+		if (abs(dir.X) > abs(dir.Z)) {
+			param2 = dir.X < 0 ? 3 : 1;
+		} else {
+			param2 = dir.Z < 0 ? 2 : 0;
+		}
+	}
+
+	assert(param2 <= 5);
+
+	//Check attachment if node is in group attached_node
+	if (((ItemGroupList) predicted_f.groups)["attached_node"] != 0) {
+		static v3s16 wallmounted_dirs[8] = {
+			v3s16(0, 1, 0),
+			v3s16(0, -1, 0),
+			v3s16(1, 0, 0),
+			v3s16(-1, 0, 0),
+			v3s16(0, 0, 1),
+			v3s16(0, 0, -1),
+		};
+		v3s16 pp;
 
 		if (predicted_f.param_type_2 == CPT2_WALLMOUNTED ||
-			predicted_f.param_type_2 == CPT2_COLORED_WALLMOUNTED) {
-			v3s16 dir = nodepos - neighbourpos;
-
-			if (abs(dir.Y) > MYMAX(abs(dir.X), abs(dir.Z))) {
-				param2 = dir.Y < 0 ? 1 : 0;
-			} else if (abs(dir.X) > abs(dir.Z)) {
-				param2 = dir.X < 0 ? 3 : 2;
-			} else {
-				param2 = dir.Z < 0 ? 5 : 4;
-			}
-		}
-
-		if (predicted_f.param_type_2 == CPT2_FACEDIR ||
-			predicted_f.param_type_2 == CPT2_COLORED_FACEDIR) {
-			v3s16 dir = nodepos - floatToInt(client->getEnv().getLocalPlayer()->getPosition(), BS);
-
-			if (abs(dir.X) > abs(dir.Z)) {
-				param2 = dir.X < 0 ? 3 : 1;
-			} else {
-				param2 = dir.Z < 0 ? 2 : 0;
-			}
-		}
-
-		assert(param2 <= 5);
-
-		//Check attachment if node is in group attached_node
-		if (((ItemGroupList) predicted_f.groups)["attached_node"] != 0) {
-			static v3s16 wallmounted_dirs[8] = {
-				v3s16(0, 1, 0),
-				v3s16(0, -1, 0),
-				v3s16(1, 0, 0),
-				v3s16(-1, 0, 0),
-				v3s16(0, 0, 1),
-				v3s16(0, 0, -1),
-			};
-			v3s16 pp;
-
-			if (predicted_f.param_type_2 == CPT2_WALLMOUNTED ||
 				predicted_f.param_type_2 == CPT2_COLORED_WALLMOUNTED)
-				pp = p + wallmounted_dirs[param2];
-			else
-				pp = p + v3s16(0, -1, 0);
+			pp = p + wallmounted_dirs[param2];
+		else
+			pp = p + v3s16(0, -1, 0);
 
-			if (!nodedef->get(map.getNode(pp)).walkable)
-				return false;
+		if (!nodedef->get(map.getNode(pp)).walkable) {
+			// Report to server
+			client->interact(INTERACT_PLACE, pointed);
+			return false;
 		}
+	}
 
-		// Apply color
-		if ((predicted_f.param_type_2 == CPT2_COLOR
+	// Apply color
+	if ((predicted_f.param_type_2 == CPT2_COLOR
 			|| predicted_f.param_type_2 == CPT2_COLORED_FACEDIR
 			|| predicted_f.param_type_2 == CPT2_COLORED_WALLMOUNTED)) {
-			const std::string &indexstr = selected_item.metadata.getString(
-				"palette_index", 0);
-			if (!indexstr.empty()) {
-				s32 index = mystoi(indexstr);
-				if (predicted_f.param_type_2 == CPT2_COLOR) {
-					param2 = index;
-				} else if (predicted_f.param_type_2
-					== CPT2_COLORED_WALLMOUNTED) {
-					// param2 = pure palette index + other
-					param2 = (index & 0xf8) | (param2 & 0x07);
-				} else if (predicted_f.param_type_2
-					== CPT2_COLORED_FACEDIR) {
-					// param2 = pure palette index + other
-					param2 = (index & 0xe0) | (param2 & 0x1f);
-				}
+		const std::string &indexstr = selected_item.metadata.getString(
+			"palette_index", 0);
+		if (!indexstr.empty()) {
+			s32 index = mystoi(indexstr);
+			if (predicted_f.param_type_2 == CPT2_COLOR) {
+				param2 = index;
+			} else if (predicted_f.param_type_2 == CPT2_COLORED_WALLMOUNTED) {
+				// param2 = pure palette index + other
+				param2 = (index & 0xf8) | (param2 & 0x07);
+			} else if (predicted_f.param_type_2 == CPT2_COLORED_FACEDIR) {
+				// param2 = pure palette index + other
+				param2 = (index & 0xe0) | (param2 & 0x1f);
 			}
 		}
+	}
 
-		// Add node to client map
-		MapNode n(id, 0, param2);
+	// Add node to client map
+	MapNode n(id, 0, param2);
 
-		try {
-			LocalPlayer *player = client->getEnv().getLocalPlayer();
+	try {
+		LocalPlayer *player = client->getEnv().getLocalPlayer();
 
-			// Dont place node when player would be inside new node
-			// NOTE: This is to be eventually implemented by a mod as client-side Lua
-			if (!nodedef->get(n).walkable ||
+		// Dont place node when player would be inside new node
+		// NOTE: This is to be eventually implemented by a mod as client-side Lua
+		if (!nodedef->get(n).walkable ||
 				g_settings->getBool("enable_build_where_you_stand") ||
 				(client->checkPrivilege("noclip") && g_settings->getBool("noclip")) ||
 				(nodedef->get(n).walkable &&
 					neighbourpos != player->getStandingNodePos() + v3s16(0, 1, 0) &&
 					neighbourpos != player->getStandingNodePos() + v3s16(0, 2, 0))) {
-
-				// This triggers the required mesh update too
-				client->addNode(p, n);
-				return true;
-			}
-		} catch (InvalidPositionException &e) {
-			errorstream << "Node placement prediction failed for "
-				<< selected_item.name << " (places "
-				<< prediction
-				<< ") - Position not loaded" << std::endl;
+			// This triggers the required mesh update too
+			client->addNode(p, n);
+			// Report to server
+			client->interact(INTERACT_PLACE, pointed);
+			// A node is predicted, also play a sound
+			soundmaker->m_player_rightpunch_sound = selected_def.sound_place;
+			return true;
+		} else {
+			soundmaker->m_player_rightpunch_sound = selected_def.sound_place_failed;
+			return false;
 		}
+	} catch (InvalidPositionException &e) {
+		errorstream << "Node placement prediction failed for "
+			<< selected_def.name << " (places "
+			<< prediction
+			<< ") - Position not loaded" << std::endl;
+		soundmaker->m_player_rightpunch_sound = selected_def.sound_place_failed;
+		return false;
 	}
-
-	return false;
 }
 
 void Game::handlePointingAtObject(const PointedThing &pointed,
@@ -3507,7 +3515,7 @@ void Game::handleDigging(const PointedThing &pointed, const v3s16 &nodepos,
 	if (!runData.digging) {
 		infostream << "Started digging" << std::endl;
 		runData.dig_instantly = runData.dig_time_complete == 0;
-		if (client->moddingEnabled() && client->getScript()->on_punchnode(nodepos, n))
+		if (client->modsLoaded() && client->getScript()->on_punchnode(nodepos, n))
 			return;
 		client->interact(INTERACT_START_DIGGING, pointed);
 		runData.digging = true;
@@ -3567,7 +3575,7 @@ void Game::handleDigging(const PointedThing &pointed, const v3s16 &nodepos,
 		bool is_valid_position;
 		MapNode wasnode = map.getNode(nodepos, &is_valid_position);
 		if (is_valid_position) {
-			if (client->moddingEnabled() &&
+			if (client->modsLoaded() &&
 					client->getScript()->on_dignode(nodepos, wasnode)) {
 				return;
 			}
@@ -3612,6 +3620,7 @@ void Game::handleDigging(const PointedThing &pointed, const v3s16 &nodepos,
 void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 		const CameraOrientation &cam)
 {
+	TimeTaker tt_update("Game::updateFrame()");
 	LocalPlayer *player = client->getEnv().getLocalPlayer();
 
 	/*
@@ -3636,7 +3645,6 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 		direct_brightness = time_brightness;
 		sunlight_seen = true;
 	} else {
-		ScopeProfiler sp(g_profiler, "Detecting background light", SPT_AVG);
 		float old_brightness = sky->getBrightness();
 		direct_brightness = client->getEnv().getClientMap()
 				.getBackgroundBrightness(MYMIN(runData.fog_range * 1.2, 60 * BS),
@@ -3745,19 +3753,11 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 	if (player->getWieldIndex() != runData.new_playeritem)
 		client->setPlayerItem(runData.new_playeritem);
 
-	// Update local inventory if it has changed
-	if (client->getLocalInventoryUpdated()) {
-		//infostream<<"Updating local inventory"<<std::endl;
-		runData.update_wielded_item_trigger = true;
-	}
-
-	if (runData.update_wielded_item_trigger) {
+	if (client->updateWieldedItem()) {
 		// Update wielded tool
 		ItemStack selected_item, hand_item;
 		ItemStack &tool_item = player->getWieldedItem(&selected_item, &hand_item);
 		camera->wield(tool_item);
-
-		runData.update_wielded_item_trigger = false;
 	}
 
 	/*
@@ -3810,7 +3810,7 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 	*/
 	const video::SColor &skycolor = sky->getSkyColor();
 
-	TimeTaker tt_draw("mainloop: draw");
+	TimeTaker tt_draw("Draw scene");
 	driver->beginScene(true, true, skycolor);
 
 	bool draw_wield_tool = (m_game_ui->m_flags.show_hud &&
@@ -3870,7 +3870,8 @@ void Game::updateFrame(ProfilerGraph *graph, RunStats *stats, f32 dtime,
 	driver->endScene();
 
 	stats->drawtime = tt_draw.stop(true);
-	g_profiler->graphAdd("mainloop_draw", stats->drawtime / 1000.0f);
+	g_profiler->avg("Game::updateFrame(): draw scene [ms]", stats->drawtime);
+	g_profiler->graphAdd("Update frame [ms]", tt_update.stop(true));
 }
 
 /* Log times and stuff for visualization */
@@ -4001,7 +4002,7 @@ void Game::extendedResourceCleanup()
 void Game::showDeathFormspec()
 {
 	static std::string formspec_str =
-		std::string(FORMSPEC_VERSION_STRING) +
+		std::string("formspec_version[1]") +
 		SIZE_TAG
 		"bgcolor[#320000b4;true]"
 		"label[4.85,1.35;" + gettext("You died") + "]"
@@ -4075,7 +4076,7 @@ void Game::showPauseMenu()
 	float ypos = simple_singleplayer_mode ? 0.7f : 0.1f;
 	std::ostringstream os;
 
-	os << FORMSPEC_VERSION_STRING  << SIZE_TAG
+	os << "formspec_version[1]" << SIZE_TAG
 		<< "button_exit[4," << (ypos++) << ";3,0.5;btn_continue;"
 		<< strgettext("Continue") << "]";
 

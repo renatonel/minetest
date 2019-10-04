@@ -187,7 +187,8 @@ int ObjectRef::l_punch(lua_State *L)
 	u16 dst_origin_hp = puncher->getHP();
 
 	// Do it
-	co->punch(dir, &toolcap, puncher, time_from_last_punch);
+	u16 wear = co->punch(dir, &toolcap, puncher, time_from_last_punch);
+	lua_pushnumber(L, wear);
 
 	// If the punched is a player, and its HP changed
 	if (src_original_hp != co->getHP() &&
@@ -202,7 +203,7 @@ int ObjectRef::l_punch(lua_State *L)
 		getServer(L)->SendPlayerHPOrDie((PlayerSAO *)puncher,
 				PlayerHPChangeReason(PlayerHPChangeReason::PLAYER_PUNCH, co));
 	}
-	return 0;
+	return 1;
 }
 
 // right_click(self, clicker); clicker = an another ObjectRef
@@ -340,7 +341,9 @@ int ObjectRef::l_get_wielded_item(lua_State *L)
 		return 1;
 	}
 
-	LuaItemStack::create(L, co->getWieldedItem());
+	ItemStack selected_item;
+	co->getWieldedItem(&selected_item, nullptr);
+	LuaItemStack::create(L, selected_item);
 	return 1;
 }
 
@@ -355,7 +358,7 @@ int ObjectRef::l_set_wielded_item(lua_State *L)
 	ItemStack item = read_item(L, 2, getServer(L)->idef());
 	bool success = co->setWieldedItem(item);
 	if (success && co->getType() == ACTIVEOBJECT_TYPE_PLAYER) {
-		getServer(L)->SendInventory(((PlayerSAO*)co));
+		getServer(L)->SendInventory((PlayerSAO *)co, true);
 	}
 	lua_pushboolean(L, success);
 	return 1;
@@ -1249,6 +1252,37 @@ int ObjectRef::l_set_look_yaw(lua_State *L)
 	return 1;
 }
 
+// set_fov(self, degrees[, is_multiplier])
+int ObjectRef::l_set_fov(lua_State *L)
+{
+	NO_MAP_LOCK_REQUIRED;
+	ObjectRef *ref = checkobject(L, 1);
+	RemotePlayer *player = getplayer(ref);
+	if (!player)
+		return 0;
+
+	player->setFov({ static_cast<f32>(luaL_checknumber(L, 2)), readParam<bool>(L, 3) });
+	getServer(L)->SendPlayerFov(player->getPeerId());
+
+	return 0;
+}
+
+// get_fov(self)
+int ObjectRef::l_get_fov(lua_State *L)
+{
+	NO_MAP_LOCK_REQUIRED;
+	ObjectRef *ref = checkobject(L, 1);
+	RemotePlayer *player = getplayer(ref);
+	if (!player)
+		return 0;
+
+	PlayerFovSpec fov_spec = player->getFov();
+	lua_pushnumber(L, fov_spec.fov);
+	lua_pushboolean(L, fov_spec.is_multiplier);
+
+	return 2;
+}
+
 // set_breath(self, breath)
 int ObjectRef::l_set_breath(lua_State *L)
 {
@@ -1962,6 +1996,8 @@ luaL_Reg ObjectRef::methods[] = {
 	luamethod(ObjectRef, set_look_vertical),
 	luamethod(ObjectRef, set_look_yaw),
 	luamethod(ObjectRef, set_look_pitch),
+	luamethod(ObjectRef, get_fov),
+	luamethod(ObjectRef, set_fov),
 	luamethod(ObjectRef, get_breath),
 	luamethod(ObjectRef, set_breath),
 	luamethod(ObjectRef, get_attribute),

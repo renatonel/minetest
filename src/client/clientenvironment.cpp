@@ -285,15 +285,14 @@ void ClientEnvironment::step(float dtime)
 	/*
 		Step and handle simple objects
 	*/
-	g_profiler->avg("CEnv: num of simple objects", m_simple_objects.size());
+	g_profiler->avg("ClientEnv: CSO count [#]", m_simple_objects.size());
 	for (auto i = m_simple_objects.begin(); i != m_simple_objects.end();) {
-		auto cur = i;
-		ClientSimpleObject *simple = *cur;
+		ClientSimpleObject *simple = *i;
 
 		simple->step(dtime);
 		if(simple->m_to_be_removed) {
 			delete simple;
-			i = m_simple_objects.erase(cur);
+			i = m_simple_objects.erase(i);
 		}
 		else {
 			++i;
@@ -400,6 +399,23 @@ void ClientEnvironment::addActiveObject(u16 id, u8 type,
 			if (auto *o = getActiveObject(c_id))
 				o->updateAttachments();
 		}
+	}
+}
+
+
+void ClientEnvironment::removeActiveObject(u16 id)
+{
+	// Get current attachment childs to detach them visually
+	std::unordered_set<int> attachment_childs;
+	if (auto *obj = getActiveObject(id))
+		attachment_childs = obj->getAttachmentChildIds();
+
+	m_ao_manager.removeObject(id);
+
+	// Perform a proper detach in Irrlicht
+	for (auto c_id : attachment_childs) {
+		if (ClientActiveObject *child = getActiveObject(c_id))
+			child->updateAttachments();
 	}
 }
 
