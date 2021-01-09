@@ -118,6 +118,10 @@ function core.register_item(name, itemdef)
 	end
 	itemdef.name = name
 
+	-- default short_description to first line of description
+	itemdef.short_description = itemdef.short_description or
+		(itemdef.description or ""):gsub("\n.*","")
+
 	-- Apply defaults and add to registered_* table
 	if itemdef.type == "node" then
 		-- Use the nodebox as selection box if it's not set manually
@@ -321,11 +325,11 @@ for name in pairs(forbidden_item_names) do
 end
 
 
--- Deprecated:
+-- Obsolete:
 -- Aliases for core.register_alias (how ironic...)
---core.alias_node = core.register_alias
---core.alias_tool = core.register_alias
---core.alias_craftitem = core.register_alias
+-- core.alias_node = core.register_alias
+-- core.alias_tool = core.register_alias
+-- core.alias_craftitem = core.register_alias
 
 --
 -- Built-in node definitions. Also defined in C.
@@ -584,6 +588,7 @@ core.unregister_biome = make_wrap_deregistration(core.register_biome,
 		core.clear_registered_biomes, core.registered_biomes)
 
 core.registered_on_chat_messages, core.register_on_chat_message = make_registration()
+core.registered_on_chatcommands, core.register_on_chatcommand = make_registration()
 core.registered_globalsteps, core.register_globalstep = make_registration()
 core.registered_playerevents, core.register_playerevent = make_registration()
 core.registered_on_mods_loaded, core.register_on_mods_loaded = make_registration()
@@ -607,9 +612,9 @@ core.registered_on_item_eats, core.register_on_item_eat = make_registration()
 core.registered_on_punchplayers, core.register_on_punchplayer = make_registration()
 core.registered_on_priv_grant, core.register_on_priv_grant = make_registration()
 core.registered_on_priv_revoke, core.register_on_priv_revoke = make_registration()
+core.registered_on_authplayers, core.register_on_authplayer = make_registration()
 core.registered_can_bypass_userlimit, core.register_can_bypass_userlimit = make_registration()
 core.registered_on_modchannel_message, core.register_on_modchannel_message = make_registration()
-core.registered_on_auth_fail, core.register_on_auth_fail = make_registration()
 core.registered_on_player_inventory_actions, core.register_on_player_inventory_action = make_registration()
 core.registered_allow_player_inventory_actions, core.register_allow_player_inventory_action = make_registration()
 

@@ -20,14 +20,15 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "translation.h"
 #include "log.h"
 #include "util/string.h"
+#include <unordered_map>
 
-static Translations main_translations;
-Translations *g_translations = &main_translations;
 
-Translations::~Translations()
-{
-	clear();
-}
+#ifndef SERVER
+// Client translations
+Translations client_translations;
+Translations *g_client_translations = &client_translations;
+#endif
+
 
 void Translations::clear()
 {

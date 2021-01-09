@@ -112,6 +112,8 @@ private:
 
 	static int l_get_mainmenu_path(lua_State *L);
 
+	static int l_get_user_path(lua_State *L);
+
 	static int l_get_modpath(lua_State *L);
 
 	static int l_get_clientmodpath(lua_State *L);
@@ -130,6 +132,8 @@ private:
 
 	static int l_copy_dir(lua_State *L);
 
+	static int l_is_dir(lua_State *L);
+
 	static int l_extract_zip(lua_State *L);
 
 	static int l_may_modify_path(lua_State *L);
@@ -144,6 +148,11 @@ private:
 	static int l_get_min_supp_proto(lua_State *L);
 
 	static int l_get_max_supp_proto(lua_State *L);
+
+	// other
+	static int l_open_url(lua_State *L);
+
+	static int l_open_dir(lua_State *L);
 
 
 	// async

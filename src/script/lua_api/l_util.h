@@ -37,7 +37,7 @@ private:
 
 	// log([level,] text)
 	// Writes a line to the logger.
-	// The one-argument version logs to infostream.
+	// The one-argument version logs to LL_NONE.
 	// The two-argument version accepts a log level.
 	static int l_log(lua_State *L);
 
@@ -64,9 +64,6 @@ private:
 
 	// is_yes(arg)
 	static int l_is_yes(lua_State *L);
-
-	// is_nan(arg)
-	static int l_is_nan(lua_State *L);
 
 	// get_builtin_path()
 	static int l_get_builtin_path(lua_State *L);

@@ -295,31 +295,26 @@ bool RecursiveDelete(const std::string &path)
 
 	infostream<<"Removing \""<<path<<"\""<<std::endl;
 
-	//return false;
-
 	pid_t child_pid = fork();
 
 	if(child_pid == 0)
 	{
 		// Child
-		char argv_data[3][10000];
+		const char *argv[4] = {
 #ifdef __ANDROID__
-		strcpy(argv_data[0], "/system/bin/rm");
+			"/system/bin/rm",
 #else
-		strcpy(argv_data[0], "/bin/rm");
+			"/bin/rm",
 #endif
-		strcpy(argv_data[1], "-rf");
-		strncpy(argv_data[2], path.c_str(), sizeof(argv_data[2]) - 1);
-		char *argv[4];
-		argv[0] = argv_data[0];
-		argv[1] = argv_data[1];
-		argv[2] = argv_data[2];
-		argv[3] = NULL;
+			"-rf",
+			path.c_str(),
+			NULL
+		};
 
 		verbosestream<<"Executing '"<<argv[0]<<"' '"<<argv[1]<<"' '"
 				<<argv[2]<<"'"<<std::endl;
 
-		execv(argv[0], argv);
+		execv(argv[0], const_cast<char**>(argv));
 
 		// Execv shouldn't return. Failed.
 		_exit(1);
@@ -331,7 +326,6 @@ bool RecursiveDelete(const std::string &path)
 		pid_t tpid;
 		do{
 			tpid = wait(&child_status);
-			//if(tpid != child_pid) process_terminated(tpid);
 		}while(tpid != child_pid);
 		return (child_status == 0);
 	}
@@ -691,6 +685,12 @@ std::string AbsolutePath(const std::string &path)
 const char *GetFilenameFromPath(const char *path)
 {
 	const char *filename = strrchr(path, DIR_DELIM_CHAR);
+	// Consistent with IsDirDelimiter this function handles '/' too
+	if (DIR_DELIM_CHAR != '/') {
+		const char *tmp = strrchr(path, '/');
+		if (tmp && tmp > filename)
+			filename = tmp;
+	}
 	return filename ? filename + 1 : path;
 }
 
@@ -740,6 +740,21 @@ bool safeWriteToFile(const std::string &path, const std::string &content)
 		remove(tmp_file.c_str());
 		return false;
 	}
+
+	return true;
+}
+
+bool ReadFile(const std::string &path, std::string &out)
+{
+	std::ifstream is(path, std::ios::binary | std::ios::ate);
+	if (!is.good()) {
+		return false;
+	}
+
+	auto size = is.tellg();
+	out.resize(size);
+	is.seekg(0);
+	is.read(&out[0], size);
 
 	return true;
 }

@@ -584,7 +584,7 @@ u8 MapNode::getMaxLevel(const NodeDefManager *nodemgr) const
 	if( f.liquid_type == LIQUID_FLOWING || f.param_type_2 == CPT2_FLOWINGLIQUID)
 		return LIQUID_LEVEL_MAX;
 	if(f.leveled || f.param_type_2 == CPT2_LEVELED)
-		return LEVELED_MAX;
+		return f.leveled_max;
 	return 0;
 }
 
@@ -603,14 +603,15 @@ u8 MapNode::getLevel(const NodeDefManager *nodemgr) const
 		if (level)
 			return level;
 	}
-	if (f.leveled > LEVELED_MAX)
-		return LEVELED_MAX;
+	// Return static value from nodedef if param2 isn't used for level
+	if (f.leveled > f.leveled_max)
+		return f.leveled_max;
 	return f.leveled;
 }
 
-u8 MapNode::setLevel(const NodeDefManager *nodemgr, s8 level)
+s8 MapNode::setLevel(const NodeDefManager *nodemgr, s16 level)
 {
-	u8 rest = 0;
+	s8 rest = 0;
 	const ContentFeatures &f = nodemgr->get(*this);
 	if (f.param_type_2 == CPT2_FLOWINGLIQUID
 			|| f.liquid_type == LIQUID_FLOWING
@@ -621,28 +622,28 @@ u8 MapNode::setLevel(const NodeDefManager *nodemgr, s8 level)
 		}
 		if (level >= LIQUID_LEVEL_SOURCE) {
 			rest = level - LIQUID_LEVEL_SOURCE;
-			setContent(nodemgr->getId(f.liquid_alternative_source));
+			setContent(f.liquid_alternative_source_id);
 			setParam2(0);
 		} else {
-			setContent(nodemgr->getId(f.liquid_alternative_flowing));
+			setContent(f.liquid_alternative_flowing_id);
 			setParam2((level & LIQUID_LEVEL_MASK) | (getParam2() & ~LIQUID_LEVEL_MASK));
 		}
 	} else if (f.param_type_2 == CPT2_LEVELED) {
 		if (level < 0) { // zero means default for a leveled nodebox
 			rest = level;
 			level = 0;
-		} else if (level > LEVELED_MAX) {
-			rest = level - LEVELED_MAX;
-			level = LEVELED_MAX;
+		} else if (level > f.leveled_max) {
+			rest = level - f.leveled_max;
+			level = f.leveled_max;
 		}
 		setParam2((level & LEVELED_MASK) | (getParam2() & ~LEVELED_MASK));
 	}
 	return rest;
 }
 
-u8 MapNode::addLevel(const NodeDefManager *nodemgr, s8 add)
+s8 MapNode::addLevel(const NodeDefManager *nodemgr, s16 add)
 {
-	s8 level = getLevel(nodemgr);
+	s16 level = getLevel(nodemgr);
 	level += add;
 	return setLevel(nodemgr, level);
 }
@@ -705,7 +706,7 @@ void MapNode::deSerialize(u8 *source, u8 version)
 }
 void MapNode::serializeBulk(std::ostream &os, int version,
 		const MapNode *nodes, u32 nodecount,
-		u8 content_width, u8 params_width, bool compressed)
+		u8 content_width, u8 params_width, int compression_level)
 {
 	if (!ser_ver_supported(version))
 		throw VersionMismatchException("ERROR: MapNode format not supported");
@@ -736,10 +737,7 @@ void MapNode::serializeBulk(std::ostream &os, int version,
 		Compress data to output stream
 	*/
 
-	if (compressed)
-		compressZlib(databuf, databuf_size, os);
-	else
-		os.write((const char*) &databuf[0], databuf_size);
+	compressZlib(databuf, databuf_size, os, compression_level);
 
 	delete [] databuf;
 }
@@ -747,7 +745,7 @@ void MapNode::serializeBulk(std::ostream &os, int version,
 // Deserialize bulk node data
 void MapNode::deSerializeBulk(std::istream &is, int version,
 		MapNode *nodes, u32 nodecount,
-		u8 content_width, u8 params_width, bool compressed)
+		u8 content_width, u8 params_width)
 {
 	if(!ser_ver_supported(version))
 		throw VersionMismatchException("ERROR: MapNode format not supported");
@@ -759,24 +757,13 @@ void MapNode::deSerializeBulk(std::istream &is, int version,
 
 	// Uncompress or read data
 	u32 len = nodecount * (content_width + params_width);
-	SharedBuffer<u8> databuf(len);
-	if(compressed)
-	{
-		std::ostringstream os(std::ios_base::binary);
-		decompressZlib(is, os);
-		std::string s = os.str();
-		if(s.size() != len)
-			throw SerializationError("deSerializeBulkNodes: "
-					"decompress resulted in invalid size");
-		memcpy(&databuf[0], s.c_str(), len);
-	}
-	else
-	{
-		is.read((char*) &databuf[0], len);
-		if(is.eof() || is.fail())
-			throw SerializationError("deSerializeBulkNodes: "
-					"failed to read bulk node data");
-	}
+	std::ostringstream os(std::ios_base::binary);
+	decompressZlib(is, os);
+	std::string s = os.str();
+	if(s.size() != len)
+		throw SerializationError("deSerializeBulkNodes: "
+				"decompress resulted in invalid size");
+	const u8 *databuf = reinterpret_cast<const u8*>(s.c_str());
 
 	// Deserialize content
 	if(content_width == 1)
@@ -846,7 +833,7 @@ void MapNode::deSerialize_pre22(const u8 *source, u8 version)
 	{
 		// In these versions, CONTENT_IGNORE and CONTENT_AIR
 		// are 255 and 254
-		// Version 19 is fucked up with sometimes the old values and sometimes not
+		// Version 19 is messed up with sometimes the old values and sometimes not
 		if(param0 == 255)
 			param0 = CONTENT_IGNORE;
 		else if(param0 == 254)

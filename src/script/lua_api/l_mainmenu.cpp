@@ -29,7 +29,6 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "porting.h"
 #include "filesys.h"
 #include "convert_json.h"
-#include "content/packages.h"
 #include "content/content.h"
 #include "content/subgames.h"
 #include "serverlist.h"
@@ -280,8 +279,8 @@ int ModApiMainMenu::l_get_favorites(lua_State *L)
 {
 	std::string listtype = "local";
 
-	if (!lua_isnone(L,1)) {
-		listtype = luaL_checkstring(L,1);
+	if (!lua_isnone(L, 1)) {
+		listtype = luaL_checkstring(L, 1);
 	}
 
 	std::vector<ServerListSpec> servers;
@@ -298,7 +297,7 @@ int ModApiMainMenu::l_get_favorites(lua_State *L)
 
 	for (const Json::Value &server : servers) {
 
-		lua_pushnumber(L,index);
+		lua_pushnumber(L, index);
 
 		lua_newtable(L);
 		int top_lvl2 = lua_gettop(L);
@@ -306,11 +305,11 @@ int ModApiMainMenu::l_get_favorites(lua_State *L)
 		if (!server["clients"].asString().empty()) {
 			std::string clients_raw = server["clients"].asString();
 			char* endptr = 0;
-			int numbervalue = strtol(clients_raw.c_str(),&endptr,10);
+			int numbervalue = strtol(clients_raw.c_str(), &endptr,10);
 
 			if ((!clients_raw.empty()) && (*endptr == 0)) {
-				lua_pushstring(L,"clients");
-				lua_pushnumber(L,numbervalue);
+				lua_pushstring(L, "clients");
+				lua_pushnumber(L, numbervalue);
 				lua_settable(L, top_lvl2);
 			}
 		}
@@ -319,83 +318,83 @@ int ModApiMainMenu::l_get_favorites(lua_State *L)
 
 			std::string clients_max_raw = server["clients_max"].asString();
 			char* endptr = 0;
-			int numbervalue = strtol(clients_max_raw.c_str(),&endptr,10);
+			int numbervalue = strtol(clients_max_raw.c_str(), &endptr,10);
 
 			if ((!clients_max_raw.empty()) && (*endptr == 0)) {
-				lua_pushstring(L,"clients_max");
-				lua_pushnumber(L,numbervalue);
+				lua_pushstring(L, "clients_max");
+				lua_pushnumber(L, numbervalue);
 				lua_settable(L, top_lvl2);
 			}
 		}
 
 		if (!server["version"].asString().empty()) {
-			lua_pushstring(L,"version");
+			lua_pushstring(L, "version");
 			std::string topush = server["version"].asString();
-			lua_pushstring(L,topush.c_str());
+			lua_pushstring(L, topush.c_str());
 			lua_settable(L, top_lvl2);
 		}
 
 		if (!server["proto_min"].asString().empty()) {
-			lua_pushstring(L,"proto_min");
+			lua_pushstring(L, "proto_min");
 			lua_pushinteger(L, server["proto_min"].asInt());
 			lua_settable(L, top_lvl2);
 		}
 
 		if (!server["proto_max"].asString().empty()) {
-			lua_pushstring(L,"proto_max");
+			lua_pushstring(L, "proto_max");
 			lua_pushinteger(L, server["proto_max"].asInt());
 			lua_settable(L, top_lvl2);
 		}
 
 		if (!server["password"].asString().empty()) {
-			lua_pushstring(L,"password");
+			lua_pushstring(L, "password");
 			lua_pushboolean(L, server["password"].asBool());
 			lua_settable(L, top_lvl2);
 		}
 
 		if (!server["creative"].asString().empty()) {
-			lua_pushstring(L,"creative");
+			lua_pushstring(L, "creative");
 			lua_pushboolean(L, server["creative"].asBool());
 			lua_settable(L, top_lvl2);
 		}
 
 		if (!server["damage"].asString().empty()) {
-			lua_pushstring(L,"damage");
+			lua_pushstring(L, "damage");
 			lua_pushboolean(L, server["damage"].asBool());
 			lua_settable(L, top_lvl2);
 		}
 
 		if (!server["pvp"].asString().empty()) {
-			lua_pushstring(L,"pvp");
+			lua_pushstring(L, "pvp");
 			lua_pushboolean(L, server["pvp"].asBool());
 			lua_settable(L, top_lvl2);
 		}
 
 		if (!server["description"].asString().empty()) {
-			lua_pushstring(L,"description");
+			lua_pushstring(L, "description");
 			std::string topush = server["description"].asString();
-			lua_pushstring(L,topush.c_str());
+			lua_pushstring(L, topush.c_str());
 			lua_settable(L, top_lvl2);
 		}
 
 		if (!server["name"].asString().empty()) {
-			lua_pushstring(L,"name");
+			lua_pushstring(L, "name");
 			std::string topush = server["name"].asString();
-			lua_pushstring(L,topush.c_str());
+			lua_pushstring(L, topush.c_str());
 			lua_settable(L, top_lvl2);
 		}
 
 		if (!server["address"].asString().empty()) {
-			lua_pushstring(L,"address");
+			lua_pushstring(L, "address");
 			std::string topush = server["address"].asString();
-			lua_pushstring(L,topush.c_str());
+			lua_pushstring(L, topush.c_str());
 			lua_settable(L, top_lvl2);
 		}
 
 		if (!server["port"].asString().empty()) {
-			lua_pushstring(L,"port");
+			lua_pushstring(L, "port");
 			std::string topush = server["port"].asString();
-			lua_pushstring(L,topush.c_str());
+			lua_pushstring(L, topush.c_str());
 			lua_settable(L, top_lvl2);
 		}
 
@@ -403,6 +402,37 @@ int ModApiMainMenu::l_get_favorites(lua_State *L)
 			float ping = server["ping"].asFloat();
 			lua_pushstring(L, "ping");
 			lua_pushnumber(L, ping);
+			lua_settable(L, top_lvl2);
+		}
+
+		if (server["clients_list"].isArray()) {
+			unsigned int index_lvl2 = 1;
+			lua_pushstring(L, "clients_list");
+			lua_newtable(L);
+			int top_lvl3 = lua_gettop(L);
+			for (const Json::Value &client : server["clients_list"]) {
+				lua_pushnumber(L, index_lvl2);
+				std::string topush = client.asString();
+				lua_pushstring(L, topush.c_str());
+				lua_settable(L, top_lvl3);
+				index_lvl2++;
+			}
+			lua_settable(L, top_lvl2);
+		}
+
+		if (server["mods"].isArray()) {
+			unsigned int index_lvl2 = 1;
+			lua_pushstring(L, "mods");
+			lua_newtable(L);
+			int top_lvl3 = lua_gettop(L);
+			for (const Json::Value &mod : server["mods"]) {
+
+				lua_pushnumber(L, index_lvl2);
+				std::string topush = mod.asString();
+				lua_pushstring(L, topush.c_str());
+				lua_settable(L, top_lvl3);
+				index_lvl2++;
+			}
 			lua_settable(L, top_lvl2);
 		}
 
@@ -571,9 +601,10 @@ int ModApiMainMenu::l_show_keys_menu(lua_State *L)
 	sanity_check(engine != NULL);
 
 	GUIKeyChangeMenu *kmenu = new GUIKeyChangeMenu(RenderingEngine::get_gui_env(),
-								engine->m_parent,
-								-1,
-								engine->m_menumanager);
+			engine->m_parent,
+			-1,
+			engine->m_menumanager,
+			engine->m_texture_source);
 	kmenu->drop();
 	return 0;
 }
@@ -586,7 +617,7 @@ int ModApiMainMenu::l_create_world(lua_State *L)
 
 	std::string path = porting::path_user + DIR_DELIM
 			"worlds" + DIR_DELIM
-			+ name;
+			+ sanitizeDirName(name, "world_");
 
 	std::vector<SubgameSpec> games = getAvailableGames();
 
@@ -594,10 +625,11 @@ int ModApiMainMenu::l_create_world(lua_State *L)
 			(gameidx < (int) games.size())) {
 
 		// Create world if it doesn't exist
-		if (!loadGameConfAndInitWorld(path, games[gameidx])) {
-			lua_pushstring(L, "Failed to initialize world");
-		} else {
+		try {
+			loadGameConfAndInitWorld(path, name, games[gameidx], true);
 			lua_pushnil(L);
+		} catch (const BaseException &e) {
+			lua_pushstring(L, (std::string("Failed to initialize world: ") + e.what()).c_str());
 		}
 	} else {
 		lua_pushstring(L, "Invalid game index");
@@ -653,6 +685,14 @@ int ModApiMainMenu::l_get_mapgen_names(lua_State *L)
 	return 1;
 }
 
+
+/******************************************************************************/
+int ModApiMainMenu::l_get_user_path(lua_State *L)
+{
+	std::string path = fs::RemoveRelativePathComponents(porting::path_user);
+	lua_pushstring(L, path.c_str());
+	return 1;
+}
 
 /******************************************************************************/
 int ModApiMainMenu::l_get_modpath(lua_State *L)
@@ -760,6 +800,15 @@ int ModApiMainMenu::l_copy_dir(lua_State *L)
 		return 1;
 	}
 	lua_pushboolean(L,false);
+	return 1;
+}
+
+/******************************************************************************/
+int ModApiMainMenu::l_is_dir(lua_State *L)
+{
+	const char *path = luaL_checkstring(L, 1);
+
+	lua_pushboolean(L, fs::IsDir(path));
 	return 1;
 }
 
@@ -904,12 +953,12 @@ int ModApiMainMenu::l_show_path_select_dialog(lua_State *L)
 
 	GUIFileSelectMenu* fileOpenMenu =
 		new GUIFileSelectMenu(RenderingEngine::get_gui_env(),
-								engine->m_parent,
-								-1,
-								engine->m_menumanager,
-								title,
-								formname,
-								is_file_select);
+				engine->m_parent,
+				-1,
+				engine->m_menumanager,
+				title,
+				formname,
+				is_file_select);
 	fileOpenMenu->setTextDest(engine->m_buttonhandler);
 	fileOpenMenu->drop();
 	return 0;
@@ -1032,6 +1081,22 @@ int ModApiMainMenu::l_get_max_supp_proto(lua_State *L)
 }
 
 /******************************************************************************/
+int ModApiMainMenu::l_open_url(lua_State *L)
+{
+	std::string url = luaL_checkstring(L, 1);
+	lua_pushboolean(L, porting::open_url(url));
+	return 1;
+}
+
+/******************************************************************************/
+int ModApiMainMenu::l_open_dir(lua_State *L)
+{
+	std::string path = luaL_checkstring(L, 1);
+	lua_pushboolean(L, porting::open_directory(path));
+	return 1;
+}
+
+/******************************************************************************/
 int ModApiMainMenu::l_do_async_callback(lua_State *L)
 {
 	GUIEngine* engine = getGuiEngine(L);
@@ -1073,6 +1138,7 @@ void ModApiMainMenu::Initialize(lua_State *L, int top)
 	API_FCT(set_background);
 	API_FCT(set_topleft_text);
 	API_FCT(get_mapgen_names);
+	API_FCT(get_user_path);
 	API_FCT(get_modpath);
 	API_FCT(get_clientmodpath);
 	API_FCT(get_gamepath);
@@ -1082,6 +1148,7 @@ void ModApiMainMenu::Initialize(lua_State *L, int top)
 	API_FCT(create_dir);
 	API_FCT(delete_dir);
 	API_FCT(copy_dir);
+	API_FCT(is_dir);
 	API_FCT(extract_zip);
 	API_FCT(may_modify_path);
 	API_FCT(get_mainmenu_path);
@@ -1093,6 +1160,8 @@ void ModApiMainMenu::Initialize(lua_State *L, int top)
 	API_FCT(get_screen_info);
 	API_FCT(get_min_supp_proto);
 	API_FCT(get_max_supp_proto);
+	API_FCT(open_url);
+	API_FCT(open_dir);
 	API_FCT(do_async_callback);
 }
 
@@ -1103,6 +1172,7 @@ void ModApiMainMenu::InitializeAsync(lua_State *L, int top)
 	API_FCT(get_games);
 	API_FCT(get_favorites);
 	API_FCT(get_mapgen_names);
+	API_FCT(get_user_path);
 	API_FCT(get_modpath);
 	API_FCT(get_clientmodpath);
 	API_FCT(get_gamepath);
@@ -1112,6 +1182,7 @@ void ModApiMainMenu::InitializeAsync(lua_State *L, int top)
 	API_FCT(create_dir);
 	API_FCT(delete_dir);
 	API_FCT(copy_dir);
+	API_FCT(is_dir);
 	//API_FCT(extract_zip); //TODO remove dependency to GuiEngine
 	API_FCT(may_modify_path);
 	API_FCT(download_file);

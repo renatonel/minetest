@@ -327,6 +327,8 @@ namespace gui
 				(const wchar_t* text, scene::ISceneManager* smgr, scene::ISceneNode* parent = 0,
 				 const video::SColor& color = video::SColor(255, 0, 0, 0), bool center = false );
 
+			inline s32 getAscender() const { return font_metrics.ascender; }
+
 		protected:
 			bool use_monochrome;
 			bool use_transparency;
@@ -354,7 +356,7 @@ namespace gui
 				load_flags = FT_LOAD_DEFAULT | FT_LOAD_RENDER;
 				if (!useHinting()) load_flags |= FT_LOAD_NO_HINTING;
 				if (!useAutoHinting()) load_flags |= FT_LOAD_NO_AUTOHINT;
-				if (useMonochrome()) load_flags |= FT_LOAD_MONOCHROME | FT_LOAD_TARGET_MONO | FT_RENDER_MODE_MONO;
+				if (useMonochrome()) load_flags |= FT_LOAD_MONOCHROME | FT_LOAD_TARGET_MONO;
 				else load_flags |= FT_LOAD_TARGET_NORMAL;
 			}
 			u32 getWidthFromCharacter(wchar_t c) const;
